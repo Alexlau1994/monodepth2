@@ -6,7 +6,7 @@ import numpy as np
 
 import torch
 from torch.utils.data import DataLoader
-
+from tqdm import tqdm
 from layers import disp_to_depth
 from utils import readlines
 from options import MonodepthOptions
@@ -62,6 +62,7 @@ def evaluate(opt):
     MIN_DEPTH = 1e-3
     MAX_DEPTH = 80
 
+    assert opt.eval_stereo == 1 and opt.png == 1
     assert sum((opt.eval_mono, opt.eval_stereo)) == 1, \
         "Please choose mono or stereo evaluation by setting either --eval_mono or --eval_stereo"
 
@@ -82,11 +83,16 @@ def evaluate(opt):
 
         dataset = datasets.KITTIRAWDataset(opt.data_path, filenames,
                                            encoder_dict['height'], encoder_dict['width'],
-                                           [0], 4, is_train=False)
-        dataloader = DataLoader(dataset, 16, shuffle=False, num_workers=opt.num_workers,
+                                           [0], 1, is_train=False,
+                                           img_ext=".png" if opt.png else ".jpg")
+        dataloader = DataLoader(dataset, 8, shuffle=False, num_workers=opt.num_workers,
                                 pin_memory=True, drop_last=False)
 
-        encoder = networks.ResnetEncoder(opt.num_layers, False)
+        if opt.encoder_type == "resnet":
+            encoder = networks.ResnetEncoder(opt.num_layers, False)
+        else:
+            encoder = networks.efficientnet_b0()
+
         depth_decoder = networks.DepthDecoder(encoder.num_ch_enc)
 
         model_dict = encoder.state_dict()
@@ -104,7 +110,7 @@ def evaluate(opt):
             encoder_dict['width'], encoder_dict['height']))
 
         with torch.no_grad():
-            for data in dataloader:
+            for data in tqdm(dataloader):
                 input_color = data[("color", 0, 0)].cuda()
 
                 if opt.post_process:
@@ -163,7 +169,7 @@ def evaluate(opt):
         quit()
 
     gt_path = os.path.join(splits_dir, opt.eval_split, "gt_depths.npz")
-    gt_depths = np.load(gt_path, fix_imports=True, encoding='latin1')["data"]
+    gt_depths = np.load(gt_path, fix_imports=True, encoding='latin1', allow_pickle=True)["data"]
 
     print("-> Evaluating")
 

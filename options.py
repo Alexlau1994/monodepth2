@@ -20,22 +20,28 @@ class MonodepthOptions:
         self.parser.add_argument("--data_path",
                                  type=str,
                                  help="path to the training data",
-                                 default=os.path.join(file_dir, "kitti_data"))
+                                 default="/mnt/data/datasets/zed_data")
         self.parser.add_argument("--log_dir",
                                  type=str,
                                  help="log directory",
-                                 default=os.path.join(os.path.expanduser("~"), "tmp"))
+                                 default="log")
+        
+        self.parser.add_argument("--encoder_type",
+                                 type=str,
+                                 help="model type for enconder, efficientnet or resnet",
+                                 choices=["efficientnet", "resnet"],
+                                 default="efficientnet")
 
         # TRAINING options
         self.parser.add_argument("--model_name",
                                  type=str,
                                  help="the name of the folder to save the model in",
-                                 default="mdp")
+                                 default="MS_efn_zed_1024x576_kangbao_skymask")
         self.parser.add_argument("--split",
                                  type=str,
                                  help="which training split to use",
-                                 choices=["eigen_zhou", "eigen_full", "odom", "benchmark"],
-                                 default="eigen_zhou")
+                                 choices=["eigen_zhou", "eigen_full", "odom", "benchmark", "zed"],
+                                 default="zed")
         self.parser.add_argument("--num_layers",
                                  type=int,
                                  help="number of resnet layers",
@@ -44,19 +50,19 @@ class MonodepthOptions:
         self.parser.add_argument("--dataset",
                                  type=str,
                                  help="dataset to train on",
-                                 default="kitti",
-                                 choices=["kitti", "kitti_odom", "kitti_depth", "kitti_test"])
+                                 default="zed",
+                                 choices=["kitti", "kitti_odom", "kitti_depth", "kitti_test", "zed"])
         self.parser.add_argument("--png",
                                  help="if set, trains from raw KITTI png files (instead of jpgs)",
                                  action="store_true")
         self.parser.add_argument("--height",
                                  type=int,
                                  help="input image height",
-                                 default=192)
+                                 default=576)
         self.parser.add_argument("--width",
                                  type=int,
                                  help="input image width",
-                                 default=640)
+                                 default=1024)
         self.parser.add_argument("--disparity_smoothness",
                                  type=float,
                                  help="disparity smoothness weight",
@@ -82,24 +88,46 @@ class MonodepthOptions:
                                  type=int,
                                  help="frames to load",
                                  default=[0, -1, 1])
+        self.parser.add_argument("--use_sky_mask",
+                                 help="if set, uses sky mask for training",
+                                 action="store_true")
+        self.parser.add_argument("--sky_disp_weight",
+                                 type=float,
+                                 help="sky disparity weight for loss",
+                                 default=0.1)
 
         # OPTIMIZATION options
         self.parser.add_argument("--batch_size",
                                  type=int,
                                  help="batch size",
-                                 default=12)
+                                 default=6)
         self.parser.add_argument("--learning_rate",
                                  type=float,
                                  help="learning rate",
-                                 default=1e-4)
+                                 default=1e-5)
+        self.parser.add_argument("--lr_min",
+                                 type=float,
+                                 help="min learning rate",
+                                 default=1e-5)
+        self.parser.add_argument("--warmup_lr_init",
+                                 type=float,
+                                 help="warmup init learning rate",
+                                 default=1e-5)
+        self.parser.add_argument("--warmup_step",
+                                 type=int,
+                                 help="warmup init learning rate",
+                                 default=0)
         self.parser.add_argument("--num_epochs",
                                  type=int,
                                  help="number of epochs",
-                                 default=20)
+                                 default=65)
         self.parser.add_argument("--scheduler_step_size",
                                  type=int,
                                  help="step size of the scheduler",
                                  default=15)
+        self.parser.add_argument("--load_optim",
+                                 help="load pretrain optimizer",
+                                 action="store_true")
 
         # ABLATION options
         self.parser.add_argument("--v1_multiscale",
@@ -140,12 +168,18 @@ class MonodepthOptions:
         self.parser.add_argument("--num_workers",
                                  type=int,
                                  help="number of dataloader workers",
-                                 default=12)
+                                 default=6)
 
         # LOADING options
         self.parser.add_argument("--load_weights_folder",
                                  type=str,
-                                 help="name of model to load")
+                                 help="name of model to load",
+                                 default="log/MS_efn_zed_1024x576_kangbao_skymask/models/weights_54"
+                                 )
+        self.parser.add_argument("--resume",
+                                 help="resume training, get epoch info from 'load_weights_folder'",
+                                 action="store_true"
+                                 )
         self.parser.add_argument("--models_to_load",
                                  nargs="+",
                                  type=str,
@@ -156,7 +190,7 @@ class MonodepthOptions:
         self.parser.add_argument("--log_frequency",
                                  type=int,
                                  help="number of batches between each tensorboard log",
-                                 default=250)
+                                 default=300)
         self.parser.add_argument("--save_frequency",
                                  type=int,
                                  help="number of epochs between each save",
@@ -183,7 +217,7 @@ class MonodepthOptions:
                                  type=str,
                                  default="eigen",
                                  choices=[
-                                    "eigen", "eigen_benchmark", "benchmark", "odom_9", "odom_10"],
+                                    "eigen", "eigen_benchmark", "benchmark", "odom_9", "odom_10", "zed"],
                                  help="which split to run eval on")
         self.parser.add_argument("--save_pred_disps",
                                  help="if set saves predicted disparities",

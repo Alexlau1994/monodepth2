@@ -5,10 +5,12 @@
 # available in the LICENSE file.
 
 from __future__ import absolute_import, division, print_function
-
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import numpy as np
 import time
 
+import timm.scheduler
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
@@ -23,7 +25,9 @@ from layers import *
 
 import datasets
 import networks
-from IPython import embed
+# from IPython import embed
+
+STEREO_SCALE_FACTOR = 5.4
 
 
 class Trainer:
@@ -51,8 +55,14 @@ class Trainer:
         if self.opt.use_stereo:
             self.opt.frame_ids.append("s")
 
-        self.models["encoder"] = networks.ResnetEncoder(
-            self.opt.num_layers, self.opt.weights_init == "pretrained")
+        if self.opt.encoder_type == "resnet":
+            self.models["encoder"] = networks.ResnetEncoder(
+                self.opt.num_layers, self.opt.weights_init == "pretrained")
+        else:
+            self.models["encoder"] = networks.efficientnet_b0(
+                pretrained=True, 
+                pretrained_path="saved_model/efficientnet_b0_rwightman-3dd342df.pth")
+
         self.models["encoder"].to(self.device)
         self.parameters_to_train += list(self.models["encoder"].parameters())
 
@@ -63,10 +73,16 @@ class Trainer:
 
         if self.use_pose_net:
             if self.opt.pose_model_type == "separate_resnet":
-                self.models["pose_encoder"] = networks.ResnetEncoder(
-                    self.opt.num_layers,
-                    self.opt.weights_init == "pretrained",
-                    num_input_images=self.num_pose_frames)
+                if self.opt.encoder_type == "resnet":
+                    self.models["pose_encoder"] = networks.ResnetEncoder(
+                        self.opt.num_layers,
+                        self.opt.weights_init == "pretrained",
+                        num_input_images=self.num_pose_frames)
+                else:
+                    self.models["pose_encoder"] = networks.efficientnet_b0(
+                        pretrained=True, 
+                        pretrained_path="saved_model/efficientnet_b0_rwightman-3dd342df.pth",
+                        num_input_images=2)
 
                 self.models["pose_encoder"].to(self.device)
                 self.parameters_to_train += list(self.models["pose_encoder"].parameters())
@@ -99,20 +115,28 @@ class Trainer:
             self.models["predictive_mask"].to(self.device)
             self.parameters_to_train += list(self.models["predictive_mask"].parameters())
 
-        self.model_optimizer = optim.Adam(self.parameters_to_train, self.opt.learning_rate)
-        self.model_lr_scheduler = optim.lr_scheduler.StepLR(
-            self.model_optimizer, self.opt.scheduler_step_size, 0.1)
+        self.model_optimizer = optim.AdamW(
+            params=self.parameters_to_train,
+            lr=self.opt.learning_rate)
+        # self.model_lr_scheduler = optim.lr_scheduler.StepLR(
+        #     self.model_optimizer, self.opt.scheduler_step_size, 0.1)
 
+        self.epoch = 0
         if self.opt.load_weights_folder is not None:
             self.load_model()
+
+        # tmp op
+        # self.model_optimizer.param_groups[0]['initial_lr'] = 1e-5
 
         print("Training model named:\n  ", self.opt.model_name)
         print("Models and tensorboard events files are saved to:\n  ", self.opt.log_dir)
         print("Training is using:\n  ", self.device)
+        print("start epoch: {}, end epoch: {}".format(self.epoch, self.opt.num_epochs))
 
         # data
         datasets_dict = {"kitti": datasets.KITTIRAWDataset,
-                         "kitti_odom": datasets.KITTIOdomDataset}
+                         "kitti_odom": datasets.KITTIOdomDataset,
+                         "zed": datasets.ZedDataset}
         self.dataset = datasets_dict[self.opt.dataset]
 
         fpath = os.path.join(os.path.dirname(__file__), "splits", self.opt.split, "{}_files.txt")
@@ -124,15 +148,35 @@ class Trainer:
         num_train_samples = len(train_filenames)
         self.num_total_steps = num_train_samples // self.opt.batch_size * self.opt.num_epochs
 
-        train_dataset = self.dataset(
-            self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)
+        self.step = num_train_samples // self.opt.batch_size * self.epoch
+        self.model_lr_scheduler = timm.scheduler.CosineLRScheduler(
+            optimizer=self.model_optimizer,
+            t_initial=self.num_total_steps,
+            lr_min=self.opt.lr_min,
+            warmup_t=self.opt.warmup_step,
+            warmup_lr_init=self.opt.warmup_lr_init
+        )
+
+        if self.opt.dataset == "zed":
+            train_dataset = self.dataset(
+                self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
+                self.opt.frame_ids, self.num_scales, is_train=True,
+                use_sky_mask=self.opt.use_sky_mask)
+            val_dataset = self.dataset(
+                self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
+                self.opt.frame_ids, self.num_scales, is_train=False, 
+                use_sky_mask=self.opt.use_sky_mask)
+        else:
+            train_dataset = self.dataset(
+                self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
+                self.opt.frame_ids, self.num_scales, is_train=True, img_ext=img_ext)
+            val_dataset = self.dataset(
+                self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
+                self.opt.frame_ids, self.num_scales, is_train=False, img_ext=img_ext)
+
         self.train_loader = DataLoader(
             train_dataset, self.opt.batch_size, True,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
-        val_dataset = self.dataset(
-            self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)
         self.val_loader = DataLoader(
             val_dataset, self.opt.batch_size, True,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
@@ -182,20 +226,19 @@ class Trainer:
     def train(self):
         """Run the entire training pipeline
         """
-        self.epoch = 0
-        self.step = 0
+
         self.start_time = time.time()
-        for self.epoch in range(self.opt.num_epochs):
+        start_epoch = self.epoch
+        for self.epoch in range(start_epoch, self.opt.num_epochs):
             self.run_epoch()
-            if (self.epoch + 1) % self.opt.save_frequency == 0:
+            if self.epoch % self.opt.save_frequency == 0:
                 self.save_model()
 
     def run_epoch(self):
         """Run a single epoch of training and validation
         """
-        self.model_lr_scheduler.step()
 
-        print("Training")
+        print("Training a new epoch")
         self.set_train()
 
         for batch_idx, inputs in enumerate(self.train_loader):
@@ -204,6 +247,7 @@ class Trainer:
 
             outputs, losses = self.process_batch(inputs)
 
+            self.model_lr_scheduler.step(self.step)
             self.model_optimizer.zero_grad()
             losses["loss"].backward()
             self.model_optimizer.step()
@@ -211,10 +255,10 @@ class Trainer:
             duration = time.time() - before_op_time
 
             # log less frequently after the first 2000 steps to save time & disk space
-            early_phase = batch_idx % self.opt.log_frequency == 0 and self.step < 2000
-            late_phase = self.step % 2000 == 0
+            # early_phase = batch_idx % self.opt.log_frequency == 0 and self.step < 2000
+            # late_phase = self.step % 2000 == 0
 
-            if early_phase or late_phase:
+            if batch_idx % self.opt.log_frequency == 0:
                 self.log_time(batch_idx, duration, losses["loss"].cpu().data)
 
                 if "depth_gt" in inputs:
@@ -224,6 +268,8 @@ class Trainer:
                 self.val()
 
             self.step += 1
+
+        # self.model_lr_scheduler.step()
 
     def process_batch(self, inputs):
         """Pass a minibatch through the network and generate images and losses
@@ -384,7 +430,8 @@ class Trainer:
                 outputs[("color", frame_id, scale)] = F.grid_sample(
                     inputs[("color", frame_id, source_scale)],
                     outputs[("sample", frame_id, scale)],
-                    padding_mode="border")
+                    padding_mode="border",
+                    align_corners=True)
 
                 if not self.opt.disable_automasking:
                     outputs[("color_identity", frame_id, scale)] = \
@@ -488,12 +535,25 @@ class Trainer:
             smooth_loss = get_smooth_loss(norm_disp, color)
 
             loss += self.opt.disparity_smoothness * smooth_loss / (2 ** scale)
+
+            if self.opt.use_sky_mask:
+                resize_disp = F.interpolate(
+                        outputs[("disp", scale)], [self.opt.height, self.opt.width],
+                        mode="bilinear", align_corners=False)
+                sky_disp_loss = self.get_sky_disp_loss(resize_disp, inputs["sky_mask"])
+                loss += sky_disp_loss * self.opt.sky_disp_weight
+
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
 
         total_loss /= self.num_scales
         losses["loss"] = total_loss
         return losses
+    
+    def get_sky_disp_loss(self, disp_pred, sky_mask):
+        sky_disp_loss = torch.abs(disp_pred)[sky_mask]
+        sky_disp_loss = torch.mean(sky_disp_loss)
+        return sky_disp_loss
 
     def compute_depth_losses(self, inputs, outputs, losses):
         """Compute depth metrics, to allow monitoring during training
@@ -502,21 +562,29 @@ class Trainer:
         so is only used to give an indication of validation performance
         """
         depth_pred = outputs[("depth", 0, 0)]
-        depth_pred = torch.clamp(F.interpolate(
-            depth_pred, [375, 1242], mode="bilinear", align_corners=False), 1e-3, 80)
+        if self.opt.dataset != "zed":
+            depth_pred = torch.clamp(F.interpolate(
+                depth_pred, [375, 1242], mode="bilinear", align_corners=False), 1e-3, 80)
         depth_pred = depth_pred.detach()
 
         depth_gt = inputs["depth_gt"]
         mask = depth_gt > 0
 
         # garg/eigen crop
-        crop_mask = torch.zeros_like(mask)
-        crop_mask[:, :, 153:371, 44:1197] = 1
-        mask = mask * crop_mask
+        if self.opt.dataset != "zed":
+            crop_mask = torch.zeros_like(mask)
+            crop_mask[:, :, 153:371, 44:1197] = 1
+            mask = mask * crop_mask
+        
+        if self.opt.dataset == "zed":
+            STEREO_SCALE_FACTOR = 1.0
 
         depth_gt = depth_gt[mask]
         depth_pred = depth_pred[mask]
-        depth_pred *= torch.median(depth_gt) / torch.median(depth_pred)
+        if self.opt.use_stereo:
+            depth_pred *= STEREO_SCALE_FACTOR
+        else:
+            depth_pred *= torch.median(depth_gt) / torch.median(depth_pred)
 
         depth_pred = torch.clamp(depth_pred, min=1e-3, max=80)
 
@@ -529,12 +597,13 @@ class Trainer:
         """Print a logging statement to the terminal
         """
         samples_per_sec = self.opt.batch_size / duration
+        lr = self.model_optimizer.param_groups[0]['lr']
         time_sofar = time.time() - self.start_time
         training_time_left = (
             self.num_total_steps / self.step - 1.0) * time_sofar if self.step > 0 else 0
         print_string = "epoch {:>3} | batch {:>6} | examples/s: {:5.1f}" + \
-            " | loss: {:.5f} | time elapsed: {} | time left: {}"
-        print(print_string.format(self.epoch, batch_idx, samples_per_sec, loss,
+            " | loss: {:.5f} | lr: {:.4e} | time elapsed: {} | time left: {}"
+        print(print_string.format(self.epoch, batch_idx, samples_per_sec, loss, lr,
                                   sec_to_hm_str(time_sofar), sec_to_hm_str(training_time_left)))
 
     def log(self, mode, inputs, outputs, losses):
@@ -544,7 +613,7 @@ class Trainer:
         for l, v in losses.items():
             writer.add_scalar("{}".format(l), v, self.step)
 
-        for j in range(min(4, self.opt.batch_size)):  # write a maxmimum of four images
+        for j in range(min(1, self.opt.batch_size)):  # write a maxmimum of four images
             for s in self.opt.scales:
                 for frame_id in self.opt.frame_ids:
                     writer.add_image(
@@ -597,6 +666,7 @@ class Trainer:
                 to_save['height'] = self.opt.height
                 to_save['width'] = self.opt.width
                 to_save['use_stereo'] = self.opt.use_stereo
+                to_save['epoch'] = self.epoch
             torch.save(to_save, save_path)
 
         save_path = os.path.join(save_folder, "{}.pth".format("adam"))
@@ -616,15 +686,23 @@ class Trainer:
             path = os.path.join(self.opt.load_weights_folder, "{}.pth".format(n))
             model_dict = self.models[n].state_dict()
             pretrained_dict = torch.load(path)
+            if self.opt.resume and n == "encoder":
+                if 'epoch' in pretrained_dict:
+                    self.epoch = pretrained_dict['epoch'] + 1
+                    self.opt.height = pretrained_dict['height']
+                    self.opt.width = pretrained_dict['width']
+                else:
+                    print("no 'epoch' info in dict when resume training")
             pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
             model_dict.update(pretrained_dict)
             self.models[n].load_state_dict(model_dict)
 
         # loading adam state
-        optimizer_load_path = os.path.join(self.opt.load_weights_folder, "adam.pth")
-        if os.path.isfile(optimizer_load_path):
-            print("Loading Adam weights")
-            optimizer_dict = torch.load(optimizer_load_path)
-            self.model_optimizer.load_state_dict(optimizer_dict)
-        else:
-            print("Cannot find Adam weights so Adam is randomly initialized")
+        if self.opt.resume or self.opt.load_optim:
+            optimizer_load_path = os.path.join(self.opt.load_weights_folder, "adam.pth")
+            if os.path.isfile(optimizer_load_path):
+                print("Loading Adam weights")
+                optimizer_dict = torch.load(optimizer_load_path)
+                self.model_optimizer.load_state_dict(optimizer_dict)
+            else:
+                print("Cannot find Adam weights so Adam is randomly initialized")
