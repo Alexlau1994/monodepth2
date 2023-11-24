@@ -54,7 +54,7 @@ class MonoDataset(data.Dataset):
         self.height = height
         self.width = width
         self.num_scales = num_scales
-        self.interp = Image.ANTIALIAS
+        self.interp = Image.LANCZOS
 
         self.frame_idxs = frame_idxs
 
@@ -66,18 +66,10 @@ class MonoDataset(data.Dataset):
 
         # We need to specify augmentations differently in newer versions of torchvision.
         # We first try the newer tuple version; if this fails we fall back to scalars
-        try:
-            self.brightness = (0.8, 1.2)
-            self.contrast = (0.8, 1.2)
-            self.saturation = (0.8, 1.2)
-            self.hue = (-0.1, 0.1)
-            transforms.ColorJitter.get_params(
-                self.brightness, self.contrast, self.saturation, self.hue)
-        except TypeError:
-            self.brightness = 0.2
-            self.contrast = 0.2
-            self.saturation = 0.2
-            self.hue = 0.1
+        self.brightness = (0.8, 1.2)
+        self.contrast = (0.8, 1.2)
+        self.saturation = (0.8, 1.2)
+        self.hue = (-0.1, 0.1)
 
         self.resize = {}
         for i in range(self.num_scales):
@@ -106,7 +98,8 @@ class MonoDataset(data.Dataset):
             if "color" in k:
                 n, im, i = k
                 inputs[(n, im, i)] = self.to_tensor(f)
-                inputs[(n + "_aug", im, i)] = self.to_tensor(color_aug(f))
+                if i == 0:
+                    inputs[(n + "_aug", im, i)] = self.to_tensor(color_aug(f))
 
     def __len__(self):
         return len(self.filenames)
@@ -173,8 +166,7 @@ class MonoDataset(data.Dataset):
             inputs[("inv_K", scale)] = torch.from_numpy(inv_K)
 
         if do_color_aug:
-            color_aug = transforms.ColorJitter.get_params(
-                self.brightness, self.contrast, self.saturation, self.hue)
+            color_aug = transforms.ColorJitter(self.brightness, self.contrast, self.saturation, self.hue)
         else:
             color_aug = (lambda x: x)
 
@@ -182,7 +174,7 @@ class MonoDataset(data.Dataset):
 
         for i in self.frame_idxs:
             del inputs[("color", i, -1)]
-            del inputs[("color_aug", i, -1)]
+            # del inputs[("color_aug", i, -1)]
 
         if self.load_depth:
             depth_gt = self.get_depth(folder, frame_index, side, do_flip)
