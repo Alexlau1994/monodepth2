@@ -20,7 +20,7 @@ class MonodepthOptions:
         self.parser.add_argument("--data_path",
                                  type=str,
                                  help="path to the training data",
-                                 default="/mnt/data/datasets/zed_data")
+                                 default="F:/data/depth_estimation")
         self.parser.add_argument("--log_dir",
                                  type=str,
                                  help="log directory",
@@ -36,12 +36,12 @@ class MonodepthOptions:
         self.parser.add_argument("--model_name",
                                  type=str,
                                  help="the name of the folder to save the model in",
-                                 default="MS_efn_zed_1024x576_kangbao_skymask")
+                                 default="MS_efn_canonical_1440x1088")
         self.parser.add_argument("--split",
                                  type=str,
                                  help="which training split to use",
-                                 choices=["eigen_zhou", "eigen_full", "odom", "benchmark", "zed"],
-                                 default="zed")
+                                 choices=["eigen_zhou", "eigen_full", "odom", "benchmark", "zed", "canonical"],
+                                 default="canonical")
         self.parser.add_argument("--num_layers",
                                  type=int,
                                  help="number of resnet layers",
@@ -50,19 +50,19 @@ class MonodepthOptions:
         self.parser.add_argument("--dataset",
                                  type=str,
                                  help="dataset to train on",
-                                 default="zed",
-                                 choices=["kitti", "kitti_odom", "kitti_depth", "kitti_test", "zed"])
+                                 default="canonical",
+                                 choices=["kitti", "kitti_odom", "kitti_depth", "kitti_test", "zed", "canonical"])
         self.parser.add_argument("--png",
                                  help="if set, trains from raw KITTI png files (instead of jpgs)",
                                  action="store_true")
         self.parser.add_argument("--height",
                                  type=int,
                                  help="input image height",
-                                 default=576)
+                                 default=1088)
         self.parser.add_argument("--width",
                                  type=int,
                                  help="input image width",
-                                 default=1024)
+                                 default=1440)
         self.parser.add_argument("--disparity_smoothness",
                                  type=float,
                                  help="disparity smoothness weight",
@@ -100,7 +100,7 @@ class MonodepthOptions:
         self.parser.add_argument("--batch_size",
                                  type=int,
                                  help="batch size",
-                                 default=6)
+                                 default=1)
         self.parser.add_argument("--learning_rate",
                                  type=float,
                                  help="learning rate",
@@ -130,12 +130,12 @@ class MonodepthOptions:
                                  action="store_true")
 
         # ABLATION options
-     #    self.parser.add_argument("--v1_multiscale",
-     #                             help="if set, uses monodepth v1 multiscale",
-     #                             action="store_true")
-     #    self.parser.add_argument("--avg_reprojection",
-     #                             help="if set, uses average reprojection loss",
-     #                             action="store_true")
+        self.parser.add_argument("--v1_multiscale",
+                                 help="if set, uses monodepth v1 multiscale",
+                                 action="store_true")
+      #   self.parser.add_argument("--avg_reprojection",
+      #                            help="if set, uses average reprojection loss",
+      #                            action="store_true")
         self.parser.add_argument("--disable_automasking",
                                  help="if set, doesn't do auto-masking",
                                  action="store_true")
@@ -168,13 +168,13 @@ class MonodepthOptions:
         self.parser.add_argument("--num_workers",
                                  type=int,
                                  help="number of dataloader workers",
-                                 default=6)
+                                 default=1)
 
         # LOADING options
         self.parser.add_argument("--load_weights_folder",
                                  type=str,
                                  help="name of model to load",
-                                 default="log/MS_efn_zed_1024x576_kangbao_skymask/models/weights_54"
+                                 default="log/MS_efn_zed_1024x576_kangbao_skymask/models/weights_63"
                                  )
         self.parser.add_argument("--resume",
                                  help="resume training, get epoch info from 'load_weights_folder'",
@@ -190,7 +190,7 @@ class MonodepthOptions:
         self.parser.add_argument("--log_frequency",
                                  type=int,
                                  help="number of batches between each tensorboard log",
-                                 default=300)
+                                 default=10)
         self.parser.add_argument("--save_frequency",
                                  type=int,
                                  help="number of epochs between each save",

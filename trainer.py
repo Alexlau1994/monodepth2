@@ -79,7 +79,7 @@ class Trainer:
                     num_input_images=self.num_pose_frames)
             else:
                 self.models["pose_encoder"] = networks.efficientnet_b0(
-                    pretrained=True, 
+                    pretrained=self.opt.weights_init == "pretrained", 
                     pretrained_path="saved_model/efficientnet_b0_rwightman-3dd342df.pth",
                     num_input_images=2)
 
@@ -114,9 +114,11 @@ class Trainer:
         print("start epoch: {}, end epoch: {}".format(self.epoch, self.opt.num_epochs))
 
         # data
-        datasets_dict = {"kitti": datasets.KITTIRAWDataset,
-                         "kitti_odom": datasets.KITTIOdomDataset,
-                         "zed": datasets.ZedDataset}
+        datasets_dict = {
+            "canonical": datasets.CanonicalDataset,
+            "kitti": datasets.KITTIRAWDataset,
+            "kitti_odom": datasets.KITTIOdomDataset,
+            "zed": datasets.ZedDataset}
         self.dataset = datasets_dict[self.opt.dataset]
 
         fpath = os.path.join(os.path.dirname(__file__), "splits", self.opt.split, "{}_files.txt")
@@ -137,7 +139,7 @@ class Trainer:
             warmup_lr_init=self.opt.warmup_lr_init
         )
 
-        if self.opt.dataset == "zed":
+        if self.opt.dataset == "zed" or self.opt.dataset == "canonical":
             train_dataset = self.dataset(
                 self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
                 self.opt.frame_ids, self.num_scales, is_train=True,
@@ -410,16 +412,10 @@ class Trainer:
 
                 identity_reprojection_losses = torch.cat(identity_reprojection_losses, 1)
 
-                if self.opt.avg_reprojection:
-                    identity_reprojection_loss = identity_reprojection_losses.mean(1, keepdim=True)
-                else:
-                    # save both images, and do min all at once below
-                    identity_reprojection_loss = identity_reprojection_losses
+                # save both images, and do min all at once below
+                identity_reprojection_loss = identity_reprojection_losses
 
-            if self.opt.avg_reprojection:
-                reprojection_loss = reprojection_losses.mean(1, keepdim=True)
-            else:
-                reprojection_loss = reprojection_losses
+            reprojection_loss = reprojection_losses
 
             if not self.opt.disable_automasking:
                 # add random numbers to break ties
@@ -473,7 +469,7 @@ class Trainer:
         so is only used to give an indication of validation performance
         """
         depth_pred = outputs[("depth", 0, 0)]
-        if self.opt.dataset != "zed":
+        if self.opt.dataset != "zed" and self.opt.dataset != "canonical":
             depth_pred = torch.clamp(F.interpolate(
                 depth_pred, [375, 1242], mode="bilinear", align_corners=False), 1e-3, 80)
         depth_pred = depth_pred.detach()
@@ -482,12 +478,12 @@ class Trainer:
         mask = depth_gt > 0
 
         # garg/eigen crop
-        if self.opt.dataset != "zed":
+        if self.opt.dataset != "zed" and self.opt.dataset != "canonical":
             crop_mask = torch.zeros_like(mask)
             crop_mask[:, :, 153:371, 44:1197] = 1
             mask = mask * crop_mask
         
-        if self.opt.dataset == "zed":
+        if self.opt.dataset == "zed" or self.opt.dataset == "canonical":
             STEREO_SCALE_FACTOR = 1.0
 
         depth_gt = depth_gt[mask]
@@ -525,24 +521,24 @@ class Trainer:
             writer.add_scalar("{}".format(l), v, self.step)
 
         for j in range(min(1, self.opt.batch_size)):  # write a maxmimum of four images
-            for s in self.opt.scales:
-                for frame_id in self.opt.frame_ids:
-                    writer.add_image(
-                        "color_{}_{}/{}".format(frame_id, s, j),
-                        inputs[("color", frame_id, s)][j].data, self.step)
-                    if s == 0 and frame_id != 0:
-                        writer.add_image(
-                            "color_pred_{}_{}/{}".format(frame_id, s, j),
-                            outputs[("color", frame_id, s)][j].data, self.step)
-
+            s = 0
+            for frame_id in self.opt.frame_ids:
                 writer.add_image(
-                    "disp_{}/{}".format(s, j),
-                    normalize_image(outputs[("disp", s)][j]), self.step)
-
-                if not self.opt.disable_automasking:
+                    "color_{}_{}/{}".format(frame_id, s, j),
+                    inputs[("color", frame_id, s)][j].data, self.step)
+                if s == 0 and frame_id != 0:
                     writer.add_image(
-                        "automask_{}/{}".format(s, j),
-                        outputs["identity_selection/{}".format(s)][j][None, ...], self.step)
+                        "color_pred_{}_{}/{}".format(frame_id, s, j),
+                        outputs[("color", frame_id, s)][j].data, self.step)
+
+            writer.add_image(
+                "disp_{}/{}".format(s, j),
+                normalize_image(outputs[("disp", s)][j]), self.step)
+
+            if not self.opt.disable_automasking:
+                writer.add_image(
+                    "automask_{}/{}".format(s, j),
+                    outputs["identity_selection/{}".format(s)][j][None, ...], self.step)
 
     def save_opts(self):
         """Save options to disk so we know what we ran this experiment with
