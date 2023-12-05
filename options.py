@@ -130,18 +130,18 @@ class MonodepthOptions:
                                  action="store_true")
 
         # ABLATION options
-        self.parser.add_argument("--v1_multiscale",
-                                 help="if set, uses monodepth v1 multiscale",
-                                 action="store_true")
-        self.parser.add_argument("--avg_reprojection",
-                                 help="if set, uses average reprojection loss",
-                                 action="store_true")
+     #    self.parser.add_argument("--v1_multiscale",
+     #                             help="if set, uses monodepth v1 multiscale",
+     #                             action="store_true")
+     #    self.parser.add_argument("--avg_reprojection",
+     #                             help="if set, uses average reprojection loss",
+     #                             action="store_true")
         self.parser.add_argument("--disable_automasking",
                                  help="if set, doesn't do auto-masking",
                                  action="store_true")
-        self.parser.add_argument("--predictive_mask",
-                                 help="if set, uses a predictive masking scheme as in Zhou et al",
-                                 action="store_true")
+     #    self.parser.add_argument("--predictive_mask",
+     #                             help="if set, uses a predictive masking scheme as in Zhou et al",
+     #                             action="store_true")
         self.parser.add_argument("--no_ssim",
                                  help="if set, disables ssim in the loss",
                                  action="store_true")
@@ -150,16 +150,16 @@ class MonodepthOptions:
                                  help="pretrained or scratch",
                                  default="pretrained",
                                  choices=["pretrained", "scratch"])
-        self.parser.add_argument("--pose_model_input",
-                                 type=str,
-                                 help="how many images the pose network gets",
-                                 default="pairs",
-                                 choices=["pairs", "all"])
-        self.parser.add_argument("--pose_model_type",
-                                 type=str,
-                                 help="normal or shared",
-                                 default="separate_resnet",
-                                 choices=["posecnn", "separate_resnet", "shared"])
+     #    self.parser.add_argument("--pose_model_input",
+     #                             type=str,
+     #                             help="how many images the pose network gets",
+     #                             default="pairs",
+     #                             choices=["pairs", "all"])
+     #    self.parser.add_argument("--pose_model_type",
+     #                             type=str,
+     #                             help="normal or shared",
+     #                             default="separate_resnet",
+     #                             choices=["posecnn", "separate_resnet", "shared"])
 
         # SYSTEM options
         self.parser.add_argument("--no_cuda",
