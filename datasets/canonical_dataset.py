@@ -52,7 +52,6 @@ class CanonicalDataset(data.Dataset):
         # 统一相机空间使用的focal lengths。参考Metric3D的做法“transforming depth labels”
         # 对于双目自监督，如果相片实际焦距不同，直接等比例修改双目相机的baseline
         self.canonical_focal_length = 1000
-        self.stereo_baseline = 0
 
         self.num_scales = num_scales
         self.interp = Image.LANCZOS
@@ -64,8 +63,11 @@ class CanonicalDataset(data.Dataset):
         self.loader = pil_loader
         self.to_tensor = transforms.ToTensor()
 
-        # We need to specify augmentations differently in newer versions of torchvision.
-        # We first try the newer tuple version; if this fails we fall back to scalars
+        # 数据增强
+        # 原始图像随机缩放比例
+        # self.random_scale = (0.8, 1.2)
+
+        # 图片色彩随机变换
         self.brightness = (0.8, 1.2)
         self.contrast = (0.8, 1.2)
         self.saturation = (0.8, 1.2)
@@ -139,6 +141,7 @@ class CanonicalDataset(data.Dataset):
 
         do_color_aug = self.is_train and random.random() > 0.5
         do_flip = self.is_train and random.random() > 0.5
+        # random_rescale = random.uniform(self.random_scale[0], self.random_scale[1])
         
         # only use left img as target
         data_dict = eval(self.filenames[index])["CAM_Fl"]
@@ -160,8 +163,8 @@ class CanonicalDataset(data.Dataset):
         # adjusting intrinsics to match each scale in the pyramid
         for scale in range(self.num_scales):
             resize_K = K.copy()
-            resize_K[0, :] *= self.width // (2 ** scale)
-            resize_K[1, :] *= self.height // (2 ** scale)
+            resize_K[0, :] /= (2 ** scale)
+            resize_K[1, :] /= (2 ** scale)
 
             inv_K = np.linalg.pinv(resize_K)
 
@@ -209,8 +212,6 @@ class CanonicalDataset(data.Dataset):
         
         K = np.eye(4, dtype=np.float32)
         K[:3, :3] = ori_K
-        K[0, :] /= ori_imgW
-        K[1, :] /= ori_imgH
 
         baseline = ori_baseline * self.canonical_focal_length / ori_K[0, 0]
 
